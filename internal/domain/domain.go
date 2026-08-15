@@ -137,3 +137,21 @@ type ModelMetrics struct {
 	FalsePositiveRate float64 `json:"false_positive_rate"`
 	LabelCoverage     float64 `json:"label_coverage"`
 }
+
+// PipelineMetrics summarises processing throughput and latency for the
+// event pipeline (Kafka consumers + outbox publisher), as opposed to
+// ModelMetrics which scores the fraud model's predictive skill.
+type PipelineMetrics struct {
+	Processed         map[string]int64 `json:"processed"`
+	Duplicates        map[string]int64 `json:"duplicates"`
+	Failures          map[string]int64 `json:"failures"`
+	Actions           map[string]int64 `json:"actions"`
+	LatencyCount      int64            `json:"latency_count"`
+	LatencySumSeconds float64          `json:"latency_sum_seconds"`
+	LatencyAvgSeconds float64          `json:"latency_avg_seconds"`
+	LatencyP50Seconds float64          `json:"latency_p50_seconds"`
+	LatencyP95Seconds float64          `json:"latency_p95_seconds"`
+	LatencyP99Seconds float64          `json:"latency_p99_seconds"`
+	OutboxPublished   int64            `json:"outbox_published"`
+	OutboxFailures    int64            `json:"outbox_failures"`
+}

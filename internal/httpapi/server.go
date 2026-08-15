@@ -24,13 +24,14 @@ type Repository interface {
 }
 
 type Server struct {
-	server     *http.Server
-	repository Repository
-	logger     *slog.Logger
+	server          *http.Server
+	repository      Repository
+	pipelineMetrics func() (domain.PipelineMetrics, error)
+	logger          *slog.Logger
 }
 
-func New(address string, repository Repository, metricsHandler http.Handler, logger *slog.Logger) *Server {
-	s := &Server{repository: repository, logger: logger}
+func New(address string, repository Repository, metricsHandler http.Handler, pipelineMetrics func() (domain.PipelineMetrics, error), logger *slog.Logger) *Server {
+	s := &Server{repository: repository, pipelineMetrics: pipelineMetrics, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.HandleFunc("GET /healthz", s.health)
@@ -38,6 +39,7 @@ func New(address string, repository Repository, metricsHandler http.Handler, log
 	mux.HandleFunc("GET /v1/transactions", s.listTransactions)
 	mux.HandleFunc("GET /v1/transactions/{id}", s.getTransaction)
 	mux.HandleFunc("GET /v1/model-metrics", s.modelMetrics)
+	mux.HandleFunc("GET /v1/pipeline-metrics", s.pipelineMetricsHandler)
 	mux.Handle("GET /metrics", metricsHandler)
 	s.server = &http.Server{
 		Addr: address, Handler: loggingMiddleware(logger, mux),
@@ -140,6 +142,16 @@ func (s *Server) modelMetrics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("model metrics failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not calculate model metrics")
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) pipelineMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.pipelineMetrics()
+	if err != nil {
+		s.logger.Error("pipeline metrics failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not calculate pipeline metrics")
 		return
 	}
 	writeJSON(w, http.StatusOK, metrics)

@@ -45,10 +45,12 @@ func (p *Processor) HandleTransaction(ctx context.Context, payload []byte) error
 	var event domain.TransactionCreated
 	if err := json.Unmarshal(payload, &event); err != nil {
 		p.metrics.Failures.WithLabelValues("transaction").Inc()
+		p.logger.Warn("transaction decode failed", "error", err)
 		return stream.Permanent(fmt.Errorf("decode transaction: %w", err))
 	}
 	if err := event.Validate(); err != nil {
 		p.metrics.Failures.WithLabelValues("transaction").Inc()
+		p.logger.Warn("transaction validation failed", "transaction_id", event.TransactionID, "error", err)
 		return stream.Permanent(fmt.Errorf("validate transaction: %w", err))
 	}
 
@@ -68,10 +70,12 @@ func (p *Processor) HandleTransaction(ctx context.Context, payload []byte) error
 	})
 	if err != nil {
 		p.metrics.Failures.WithLabelValues("transaction").Inc()
+		p.logger.Error("transaction evaluation failed", "transaction_id", event.TransactionID, "error", err)
 		return err
 	}
 	if !created {
 		p.metrics.Duplicates.WithLabelValues("transaction").Inc()
+		p.logger.Info("duplicate transaction ignored", "transaction_id", event.TransactionID)
 		return nil
 	}
 	p.metrics.Processed.WithLabelValues("transaction").Inc()
@@ -94,21 +98,25 @@ func (p *Processor) HandleLabel(ctx context.Context, payload []byte) error {
 	var label domain.FraudLabel
 	if err := json.Unmarshal(payload, &label); err != nil {
 		p.metrics.Failures.WithLabelValues("label").Inc()
+		p.logger.Warn("label decode failed", "error", err)
 		return stream.Permanent(fmt.Errorf("decode label: %w", err))
 	}
 	if err := label.Validate(); err != nil {
 		p.metrics.Failures.WithLabelValues("label").Inc()
+		p.logger.Warn("label validation failed", "transaction_id", label.TransactionID, "error", err)
 		return stream.Permanent(fmt.Errorf("validate label: %w", err))
 	}
 	created, err := p.repository.StoreLabel(ctx, label)
 	if err != nil {
 		p.metrics.Failures.WithLabelValues("label").Inc()
+		p.logger.Error("label storage failed", "transaction_id", label.TransactionID, "error", err)
 		return err
 	}
 	if created {
 		p.metrics.Processed.WithLabelValues("label").Inc()
 	} else {
 		p.metrics.Duplicates.WithLabelValues("label").Inc()
+		p.logger.Info("duplicate label ignored", "transaction_id", label.TransactionID)
 	}
 	return nil
 }

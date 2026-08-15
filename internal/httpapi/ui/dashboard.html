@@ -139,6 +139,24 @@
   </section>
 
   <section>
+    <h2>Pipeline throughput &amp; latency</h2>
+    <div class="cards">
+      <div class="card"><div class="label">Processed</div><div class="value" id="p-processed">—</div></div>
+      <div class="card"><div class="label">Duplicates</div><div class="value" id="p-duplicates">—</div></div>
+      <div class="card"><div class="label">Failures</div><div class="value fp" id="p-failures">—</div></div>
+      <div class="card"><div class="label">Outbox published</div><div class="value" id="p-outbox-published">—</div></div>
+      <div class="card"><div class="label">Outbox failures</div><div class="value fp" id="p-outbox-failures">—</div></div>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="label">Avg latency</div><div class="value" id="p-latency-avg">—</div></div>
+      <div class="card"><div class="label">p50 latency</div><div class="value" id="p-latency-p50">—</div></div>
+      <div class="card"><div class="label">p95 latency</div><div class="value" id="p-latency-p95">—</div></div>
+      <div class="card"><div class="label">p99 latency</div><div class="value" id="p-latency-p99">—</div></div>
+      <div class="card"><div class="label">Sample count</div><div class="value" id="p-latency-count">—</div></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Recent transactions</h2>
     <table>
       <thead>
@@ -177,6 +195,15 @@
   function fmtTime(iso) {
     try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
   }
+  function fmtMs(seconds) { return (seconds * 1000).toFixed(1) + " ms"; }
+  function sumValues(obj) {
+    return Object.keys(obj || {}).reduce(function (total, key) { return total + obj[key]; }, 0);
+  }
+  function fmtBreakdown(obj) {
+    var keys = Object.keys(obj || {});
+    if (keys.length === 0) return "0";
+    return sumValues(obj) + " (" + keys.map(function (k) { return k + ": " + obj[k]; }).join(", ") + ")";
+  }
 
   function loadMetrics() {
     var params = new URLSearchParams();
@@ -195,6 +222,23 @@
         document.getElementById("m-fp").textContent = m.false_positive;
         document.getElementById("m-tn").textContent = m.true_negative;
         document.getElementById("m-fn").textContent = m.false_negative;
+      });
+  }
+
+  function loadPipelineMetrics() {
+    return fetch("/v1/pipeline-metrics")
+      .then(function (r) { if (!r.ok) throw new Error("pipeline metrics: " + r.status); return r.json(); })
+      .then(function (p) {
+        document.getElementById("p-processed").textContent = fmtBreakdown(p.processed);
+        document.getElementById("p-duplicates").textContent = fmtBreakdown(p.duplicates);
+        document.getElementById("p-failures").textContent = fmtBreakdown(p.failures);
+        document.getElementById("p-outbox-published").textContent = p.outbox_published;
+        document.getElementById("p-outbox-failures").textContent = p.outbox_failures;
+        document.getElementById("p-latency-avg").textContent = fmtMs(p.latency_avg_seconds);
+        document.getElementById("p-latency-p50").textContent = fmtMs(p.latency_p50_seconds);
+        document.getElementById("p-latency-p95").textContent = fmtMs(p.latency_p95_seconds);
+        document.getElementById("p-latency-p99").textContent = fmtMs(p.latency_p99_seconds);
+        document.getElementById("p-latency-count").textContent = p.latency_count;
       });
   }
 
@@ -236,7 +280,7 @@
   function refresh(reset) {
     showError(null);
     statusEl.textContent = "loading…";
-    Promise.all([loadMetrics(), loadTransactions(reset !== false)])
+    Promise.all([loadMetrics(), loadPipelineMetrics(), loadTransactions(reset !== false)])
       .then(function () { statusEl.textContent = "updated " + new Date().toLocaleTimeString(); })
       .catch(function (err) { statusEl.textContent = ""; showError(err.message); });
   }

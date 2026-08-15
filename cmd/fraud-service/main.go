@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bensullivan2002/learn-go-project/internal/domain"
 	"github.com/bensullivan2002/learn-go-project/internal/httpapi"
 	"github.com/bensullivan2002/learn-go-project/internal/model"
 	"github.com/bensullivan2002/learn-go-project/internal/policy"
@@ -82,7 +83,8 @@ func run() error {
 	metrics := service.NewMetrics(registry)
 	processor := service.NewProcessor(repository, scorer, thresholds, metrics, logger)
 	outbox := service.NewOutbox(repository, producer, metrics, logger)
-	api := httpapi.New(*address, repository, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), logger)
+	api := httpapi.New(*address, repository, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}),
+		func() (domain.PipelineMetrics, error) { return service.PipelineSnapshot(registry) }, logger)
 
 	logger.Info("starting fraud service", "brokers", brokers, "http_address", *address, "model_version", scorer.Version())
 	group, groupCtx := errgroup.WithContext(ctx)

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,10 @@ func (f fakeRepository) ModelMetrics(context.Context, string) (domain.ModelMetri
 	return domain.ModelMetrics{TotalAssessments: 10}, nil
 }
 
+func fakePipelineMetrics() (domain.PipelineMetrics, error) {
+	return domain.PipelineMetrics{Processed: map[string]int64{"transaction": 5}}, nil
+}
+
 func TestCursorRoundTrip(t *testing.T) {
 	wantTime := time.Date(2026, 1, 2, 3, 4, 5, 123, time.UTC)
 	wantID := "tx-123"
@@ -38,7 +43,7 @@ func TestCursorRoundTrip(t *testing.T) {
 }
 
 func TestDashboardServesHTML(t *testing.T) {
-	server := New(":0", fakeRepository{}, http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(":0", fakeRepository{}, http.NotFoundHandler(), fakePipelineMetrics, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(response, request)
@@ -53,8 +58,25 @@ func TestDashboardServesHTML(t *testing.T) {
 	}
 }
 
+func TestPipelineMetricsServesJSON(t *testing.T) {
+	server := New(":0", fakeRepository{}, http.NotFoundHandler(), fakePipelineMetrics, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "/v1/pipeline-metrics", nil)
+	response := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var metrics domain.PipelineMetrics
+	if err := json.NewDecoder(response.Body).Decode(&metrics); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if metrics.Processed["transaction"] != 5 {
+		t.Fatalf("Processed[transaction] = %d, want 5", metrics.Processed["transaction"])
+	}
+}
+
 func TestListRejectsInvalidLimit(t *testing.T) {
-	server := New(":0", fakeRepository{}, http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(":0", fakeRepository{}, http.NotFoundHandler(), fakePipelineMetrics, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/v1/transactions?limit=101", nil)
 	response := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(response, request)
