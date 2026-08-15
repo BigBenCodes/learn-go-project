@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -17,6 +19,19 @@ const (
 	AssessmentsTopic  = "fraud.assessments.v1"
 	DeadLetterTopic   = "fraud.dead-letter.v1"
 )
+
+// ParseBrokers splits a comma-separated broker list, trimming blanks so a
+// trailing comma or a space after one does not reach kgo.SeedBrokers as an
+// empty or padded address.
+func ParseBrokers(value string) []string {
+	var brokers []string
+	for _, candidate := range strings.Split(value, ",") {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			brokers = append(brokers, candidate)
+		}
+	}
+	return brokers
+}
 
 type Producer struct {
 	client *kgo.Client
@@ -90,12 +105,14 @@ func (c *Consumer) Close() { c.client.Close() }
 
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	jobs := make([]chan *kgo.Record, c.workers)
 	errCh := make(chan error, c.workers)
+	var wg sync.WaitGroup
 	for i := range jobs {
 		jobs[i] = make(chan *kgo.Record, 32)
+		wg.Add(1)
 		go func(records <-chan *kgo.Record) {
+			defer wg.Done()
 			for record := range records {
 				if err := c.handleRecord(ctx, record, handler); err != nil {
 					select {
@@ -107,10 +124,20 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			}
 		}(jobs[i])
 	}
+	// Close the job channels and wait for the workers to drain before
+	// returning. Without the join, Run's caller proceeds to its deferred
+	// Consumer.Close()/Producer.Close()/pool.Close() while handlers are still
+	// mid-flight, and a late CommitRecords lands on an already-closed client.
+	//
+	// cancel() has to happen first. On the errCh path the parent context is
+	// still live, so a worker retrying a transient failure would never stop
+	// and wg.Wait() would block forever.
 	defer func() {
+		cancel()
 		for _, ch := range jobs {
 			close(ch)
 		}
+		wg.Wait()
 	}()
 
 	for {

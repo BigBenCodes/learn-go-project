@@ -20,7 +20,7 @@ These recipes exercise the parts of the pipeline that don't show up just from ru
 4. Restart the service and let it reprocess every transaction.
 5. Compare `go run ./cmd/fraudctl stats` again — the assessment count should be unchanged.
 
-**What this demonstrates:** `Postgres.Evaluate` inserts the raw transaction with `ON CONFLICT DO NOTHING`; a redelivered event that already exists is detected (zero rows affected) and treated as a no-op rather than a duplicate assessment. See [Delivery Guarantees and Idempotency](../explanation/delivery-guarantees-and-idempotency.md).
+**What this demonstrates:** `Postgres.Evaluate` inserts the raw transaction with `ON CONFLICT (transaction_id) DO NOTHING`; a redelivered event that already exists is detected (zero rows affected) and treated as a no-op rather than a duplicate assessment. See [Delivery Guarantees and Idempotency](../explanation/delivery-guarantees-and-idempotency.md).
 
 ## 3. Change policy thresholds without touching the model
 

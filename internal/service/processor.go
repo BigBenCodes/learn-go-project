@@ -71,6 +71,12 @@ func (p *Processor) HandleTransaction(ctx context.Context, payload []byte) error
 	if err != nil {
 		p.metrics.Failures.WithLabelValues("transaction").Inc()
 		p.logger.Error("transaction evaluation failed", "transaction_id", event.TransactionID, "error", err)
+		// A uniqueness conflict outside the idempotency key is a bad event, not
+		// a sick database: retrying it would spin forever and stall the
+		// partition, so dead-letter it like a decode failure.
+		if store.IsUnprocessable(err) {
+			return stream.Permanent(err)
+		}
 		return err
 	}
 	if !created {
@@ -110,6 +116,9 @@ func (p *Processor) HandleLabel(ctx context.Context, payload []byte) error {
 	if err != nil {
 		p.metrics.Failures.WithLabelValues("label").Inc()
 		p.logger.Error("label storage failed", "transaction_id", label.TransactionID, "error", err)
+		if store.IsUnprocessable(err) {
+			return stream.Permanent(err)
+		}
 		return err
 	}
 	if created {

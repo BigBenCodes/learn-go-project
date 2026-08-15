@@ -5,10 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/bensullivan2002/learn-go-project/internal/domain"
@@ -19,6 +17,7 @@ import (
 	"github.com/bensullivan2002/learn-go-project/internal/store"
 	"github.com/bensullivan2002/learn-go-project/internal/stream"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,9 +38,14 @@ func run() error {
 		workers     = flag.Int("workers", 6, "bounded transaction workers")
 		review      = flag.Float64("review-threshold", 0.65, "review score threshold")
 		escalate    = flag.Float64("escalate-threshold", 0.85, "escalation score threshold")
+		logLevel    = flag.String("log-level", env("LOG_LEVEL", "info"), "debug, info, warn, or error")
 	)
 	flag.Parse()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	level, err := parseLevel(*logLevel)
+	if err != nil {
+		return err
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -61,7 +65,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	brokers := splitNonEmpty(*brokersRaw)
+	brokers := stream.ParseBrokers(*brokersRaw)
 	producer, err := stream.NewProducer(brokers)
 	if err != nil {
 		return err
@@ -79,7 +83,7 @@ func run() error {
 	defer labelConsumer.Close()
 
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := service.NewMetrics(registry)
 	processor := service.NewProcessor(repository, scorer, thresholds, metrics, logger)
 	outbox := service.NewOutbox(repository, producer, metrics, logger)
@@ -92,7 +96,8 @@ func run() error {
 	group.Go(func() error { return labelConsumer.Run(groupCtx, processor.HandleLabel) })
 	group.Go(func() error { return outbox.Run(groupCtx) })
 	group.Go(func() error {
-		if err := api.Run(groupCtx); err != nil && err != http.ErrServerClosed {
+		// api.Run already maps http.ErrServerClosed to nil.
+		if err := api.Run(groupCtx); err != nil {
 			return fmt.Errorf("serve HTTP: %w", err)
 		}
 		return nil
@@ -100,19 +105,17 @@ func run() error {
 	return group.Wait()
 }
 
+func parseLevel(name string) (slog.Level, error) {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(name)); err != nil {
+		return 0, fmt.Errorf("parse log level %q: %w", name, err)
+	}
+	return level, nil
+}
+
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return fallback
-}
-
-func splitNonEmpty(value string) []string {
-	var values []string
-	for _, candidate := range strings.Split(value, ",") {
-		if candidate = strings.TrimSpace(candidate); candidate != "" {
-			values = append(values, candidate)
-		}
-	}
-	return values
 }

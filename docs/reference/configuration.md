@@ -13,8 +13,11 @@ Every flag falls back to an environment variable, which falls back to a hardcode
 | `--workers`            | —               | `6`                                                           | Bounded transaction-consumer worker pool size  |
 | `--review-threshold`   | —               | `0.65`                                                        | Score at/above which `review` is recommended   |
 | `--escalate-threshold` | —               | `0.85`                                                        | Score at/above which `escalate` is recommended |
+| `--log-level`          | `LOG_LEVEL`     | `info`                                                        | `debug`, `info`, `warn`, or `error`            |
 
-Thresholds must satisfy `0 <= review-threshold < escalate-threshold <= 1`; the service fails to start otherwise.
+Thresholds must satisfy `0 <= review-threshold < escalate-threshold <= 1` and must be numbers (`NaN` is rejected); the service fails to start otherwise.
+
+`--log-level debug` enables the per-request HTTP log in `loggingMiddleware` and the `no_action` branch of the transaction processor, both of which are silent at `info`.
 
 ## `configs/model.json` schema
 
@@ -74,4 +77,4 @@ Registered in `internal/service/metrics.go`, exposed at `GET /metrics`:
 | `fraud_outbox_published_total`      | counter   | —                              | Successfully published outbox events                |
 | `fraud_outbox_failures_total`       | counter   | —                              | Failed outbox publish attempts                      |
 
-Plus the standard Go runtime and process collectors (`prometheus.NewGoCollector`, `prometheus.NewProcessCollector`).
+Plus the standard Go runtime and process collectors (`collectors.NewGoCollector`, `collectors.NewProcessCollector`).

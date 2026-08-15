@@ -11,8 +11,31 @@ import (
 
 	"github.com/bensullivan2002/learn-go-project/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// uniqueViolation is the SQLSTATE Postgres raises for a duplicate key.
+const uniqueViolation = "23505"
+
+// ErrUnprocessable marks an event that can never succeed on retry: it collides
+// with a uniqueness constraint other than the idempotency key it was written
+// against (two transaction_ids sharing one event_id, say), or it looks like a
+// duplicate but has no assessment to return. Callers should dead-letter these
+// rather than retry, or the record blocks its partition forever.
+var ErrUnprocessable = errors.New("unprocessable event")
+
+func IsUnprocessable(err error) bool { return errors.Is(err, ErrUnprocessable) }
+
+// unprocessable tags Postgres unique-key violations so the caller can tell a
+// permanent data problem from a transient database failure.
+func unprocessable(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return fmt.Errorf("%w: %w", ErrUnprocessable, err)
+	}
+	return err
+}
 
 //go:embed migrations/001_init.sql
 var migration string
@@ -57,19 +80,30 @@ func (s *Postgres) Evaluate(ctx context.Context, event domain.TransactionCreated
 	if err != nil {
 		return domain.Assessment{}, false, fmt.Errorf("encode transaction event: %w", err)
 	}
+	// The conflict target is the idempotency key specifically. A bare
+	// ON CONFLICT DO NOTHING would also swallow the event_id UNIQUE violation,
+	// and the zero-rows-affected branch below would then misread a genuinely
+	// bad event as a redelivery and look up an assessment that never existed.
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO transactions
 			(transaction_id, event_id, account_id, occurred_at, merchant_id, merchant_country, raw_event)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT DO NOTHING`,
+		ON CONFLICT (transaction_id) DO NOTHING`,
 		event.TransactionID, event.EventID, event.AccountID, event.OccurredAt,
 		event.Merchant.ID, event.Merchant.Country, raw,
 	)
 	if err != nil {
-		return domain.Assessment{}, false, fmt.Errorf("insert transaction: %w", err)
+		return domain.Assessment{}, false, fmt.Errorf("insert transaction: %w", unprocessable(err))
 	}
 	if tag.RowsAffected() == 0 {
 		assessment, err := getAssessment(ctx, tx, event.TransactionID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The transaction row exists but its assessment does not, which the
+			// single-transaction write in this function is supposed to make
+			// impossible. Retrying cannot repair it.
+			return domain.Assessment{}, false, fmt.Errorf(
+				"%w: transaction %s has no assessment", ErrUnprocessable, event.TransactionID)
+		}
 		if err != nil {
 			return domain.Assessment{}, false, fmt.Errorf("load duplicate assessment: %w", err)
 		}
@@ -112,7 +146,7 @@ func (s *Postgres) Evaluate(ctx context.Context, event domain.TransactionCreated
 		assessment.ModelVersion, assessment.RiskScore, assessment.RecommendedAction, signals,
 	)
 	if err != nil {
-		return domain.Assessment{}, false, fmt.Errorf("insert assessment: %w", err)
+		return domain.Assessment{}, false, fmt.Errorf("insert assessment: %w", unprocessable(err))
 	}
 	payload, err := json.Marshal(assessment)
 	if err != nil {
@@ -124,7 +158,7 @@ func (s *Postgres) Evaluate(ctx context.Context, event domain.TransactionCreated
 		assessment.EventID, assessment.TransactionID, payload,
 	)
 	if err != nil {
-		return domain.Assessment{}, false, fmt.Errorf("insert outbox event: %w", err)
+		return domain.Assessment{}, false, fmt.Errorf("insert outbox event: %w", unprocessable(err))
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Assessment{}, false, fmt.Errorf("commit assessment: %w", err)
@@ -155,14 +189,18 @@ func getAssessment(ctx context.Context, q interface {
 }
 
 func (s *Postgres) StoreLabel(ctx context.Context, label domain.FraudLabel) (bool, error) {
+	// Scoped to the idempotency key for the same reason as Evaluate: a bare
+	// ON CONFLICT DO NOTHING also absorbs the event_id UNIQUE violation, and
+	// the caller would report "duplicate label ignored" and commit the offset
+	// while the label was silently dropped and the transaction left unlabelled.
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO fraud_labels (transaction_id, event_id, labelled_at, is_fraud, fraud_type)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING`,
+		ON CONFLICT (transaction_id) DO NOTHING`,
 		label.TransactionID, label.EventID, label.LabelledAt, label.IsFraud, label.FraudType,
 	)
 	if err != nil {
-		return false, fmt.Errorf("store fraud label: %w", err)
+		return false, fmt.Errorf("store fraud label: %w", unprocessable(err))
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -175,31 +213,63 @@ type OutboxEvent struct {
 	Payload []byte
 }
 
-func (s *Postgres) FetchOutbox(ctx context.Context, limit int) ([]OutboxEvent, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, event_id, topic, event_key, payload
-		FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT $1`, limit)
+// PublishOutbox claims up to limit unpublished rows, hands each to publish in
+// id order, and marks the ones that published — all inside one transaction.
+//
+// FOR UPDATE SKIP LOCKED is what makes a second service replica safe: its
+// outbox loop skips the rows this transaction holds instead of publishing them
+// a second time. The cost is that a pool connection stays checked out for the
+// duration of the batch's Kafka writes, which is the trade this pattern makes
+// to keep publishing at-least-once (publish first, then mark) rather than
+// at-most-once (mark first, then publish).
+//
+// A publish failure stops the batch and returns the error, but the rows that
+// already published are still committed as published, so a failing row does
+// not force the ones before it to be re-sent.
+func (s *Postgres) PublishOutbox(ctx context.Context, limit int, publish func(OutboxEvent) error) (int, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("fetch outbox: %w", err)
+		return 0, fmt.Errorf("begin outbox transaction: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT id, event_id, topic, event_key, payload
+		FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT $1
+		FOR UPDATE SKIP LOCKED`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("claim outbox rows: %w", err)
+	}
 	var events []OutboxEvent
 	for rows.Next() {
 		var event OutboxEvent
 		if err := rows.Scan(&event.ID, &event.EventID, &event.Topic, &event.Key, &event.Payload); err != nil {
-			return nil, fmt.Errorf("scan outbox: %w", err)
+			rows.Close()
+			return 0, fmt.Errorf("scan outbox: %w", err)
 		}
 		events = append(events, event)
 	}
-	return events, rows.Err()
-}
-
-func (s *Postgres) MarkOutboxPublished(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE id = $1`, id)
-	if err != nil {
-		return fmt.Errorf("mark outbox published: %w", err)
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate outbox: %w", err)
 	}
-	return nil
+
+	published := 0
+	var publishErr error
+	for _, event := range events {
+		if err := publish(event); err != nil {
+			publishErr = fmt.Errorf("publish outbox event %d: %w", event.ID, err)
+			break
+		}
+		if _, err := tx.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE id = $1`, event.ID); err != nil {
+			return published, fmt.Errorf("mark outbox published: %w", err)
+		}
+		published++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit outbox batch: %w", err)
+	}
+	return published, publishErr
 }
 
 type ListFilter struct {
@@ -221,7 +291,8 @@ func (s *Postgres) ListTransactions(ctx context.Context, filter ListFilter) (Pag
 		limit = 20
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.raw_event, a.event_id, a.assessed_at, a.model_version, a.risk_score,
+		SELECT t.occurred_at, t.transaction_id,
+			t.raw_event, a.event_id, a.assessed_at, a.model_version, a.risk_score,
 			a.recommended_action, a.signals,
 			l.event_id, l.labelled_at, l.is_fraud, l.fraud_type
 		FROM transactions t
@@ -236,63 +307,79 @@ func (s *Postgres) ListTransactions(ctx context.Context, filter ListFilter) (Pag
 	}
 	defer rows.Close()
 	page := Page{Records: make([]domain.TransactionRecord, 0, limit)}
+	cursors := make([]cursor, 0, limit+1)
 	for rows.Next() {
-		record, err := scanRecord(rows)
+		record, key, err := scanRecord(rows)
 		if err != nil {
 			return Page{}, err
 		}
 		page.Records = append(page.Records, record)
+		cursors = append(cursors, key)
 	}
 	if err := rows.Err(); err != nil {
 		return Page{}, fmt.Errorf("iterate transactions: %w", err)
 	}
 	if len(page.Records) > limit {
 		page.Records = page.Records[:limit]
-		last := page.Records[limit-1].Transaction
-		page.NextTime = &last.OccurredAt
-		page.NextID = last.TransactionID
+		page.NextTime = &cursors[limit-1].occurredAt
+		page.NextID = cursors[limit-1].transactionID
 	}
 	return page, nil
 }
 
 func (s *Postgres) GetTransaction(ctx context.Context, id string) (domain.TransactionRecord, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT t.raw_event, a.event_id, a.assessed_at, a.model_version, a.risk_score,
+		SELECT t.occurred_at, t.transaction_id,
+			t.raw_event, a.event_id, a.assessed_at, a.model_version, a.risk_score,
 			a.recommended_action, a.signals,
 			l.event_id, l.labelled_at, l.is_fraud, l.fraud_type
 		FROM transactions t
 		JOIN assessments a USING (transaction_id)
 		LEFT JOIN fraud_labels l USING (transaction_id)
 		WHERE t.transaction_id = $1`, id)
-	return scanRecord(row)
+	record, _, err := scanRecord(row)
+	return record, err
 }
 
 type scanner interface {
 	Scan(...any) error
 }
 
-func scanRecord(row scanner) (domain.TransactionRecord, error) {
+// cursor is the ORDER BY key read back from the indexed columns rather than
+// from raw_event. The JSON keeps time.Time's nanoseconds while the
+// occurred_at column is timestamptz and only stores microseconds, so a cursor
+// taken from the JSON can be a few hundred nanoseconds later than the row it
+// names — and `(occurred_at, transaction_id) < (cursor)` then matches that
+// same row again, repeating it at the head of every subsequent page.
+type cursor struct {
+	occurredAt    time.Time
+	transactionID string
+}
+
+func scanRecord(row scanner) (domain.TransactionRecord, cursor, error) {
 	var record domain.TransactionRecord
+	var key cursor
 	var raw, signals []byte
 	var labelEvent, fraudType sql.NullString
 	var labelledAt sql.NullTime
 	var isFraud sql.NullBool
 	err := row.Scan(
+		&key.occurredAt, &key.transactionID,
 		&raw, &record.Assessment.EventID, &record.Assessment.AssessedAt,
 		&record.Assessment.ModelVersion, &record.Assessment.RiskScore,
 		&record.Assessment.RecommendedAction, &signals,
 		&labelEvent, &labelledAt, &isFraud, &fraudType,
 	)
 	if err != nil {
-		return domain.TransactionRecord{}, err
+		return domain.TransactionRecord{}, cursor{}, err
 	}
 	if err := json.Unmarshal(raw, &record.Transaction); err != nil {
-		return domain.TransactionRecord{}, fmt.Errorf("decode stored transaction: %w", err)
+		return domain.TransactionRecord{}, cursor{}, fmt.Errorf("decode stored transaction: %w", err)
 	}
 	record.Assessment.SchemaVersion = domain.SchemaVersion
 	record.Assessment.TransactionID = record.Transaction.TransactionID
 	if err := json.Unmarshal(signals, &record.Assessment.Signals); err != nil {
-		return domain.TransactionRecord{}, fmt.Errorf("decode stored signals: %w", err)
+		return domain.TransactionRecord{}, cursor{}, fmt.Errorf("decode stored signals: %w", err)
 	}
 	if labelEvent.Valid {
 		record.Label = &domain.FraudLabel{
@@ -304,7 +391,7 @@ func scanRecord(row scanner) (domain.TransactionRecord, error) {
 			FraudType:     fraudType.String,
 		}
 	}
-	return record, nil
+	return record, key, nil
 }
 
 func (s *Postgres) ModelMetrics(ctx context.Context, modelVersion string) (domain.ModelMetrics, error) {
