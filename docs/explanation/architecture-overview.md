@@ -33,11 +33,11 @@ Three binaries, one shared `internal/` library:
 
 ## Why transactions are keyed by account
 
-Kafka partitions are processed concurrently — `stream.Consumer` runs a worker pool keyed by `partition % workers` — but records *within* one partition are handled and committed strictly in order. Both the simulator and any real producer key `transactions.v1` records by account ID, so every event for a given account lands in the same partition and is therefore processed in order relative to that account's history, even while different accounts' events are scored in parallel.
+Kafka partitions are processed concurrently — `stream.Consumer` runs a worker pool keyed by `partition % workers` — but records _within_ one partition are handled and committed strictly in order. Both the simulator and any real producer key `transactions.v1` records by account ID, so every event for a given account lands in the same partition and is therefore processed in order relative to that account's history, even while different accounts' events are scored in parallel.
 
 ## Why there's an outbox instead of publishing directly
 
-`fraud-service` never publishes `fraud.assessments.v1` directly from the request path. Instead, `Postgres.Evaluate` writes the assessment *and* an outbox row in the same database transaction, and a separate `service.Outbox` loop polls for unpublished rows every 250ms and publishes them. This decouples the database commit from the Kafka publish: neither can succeed without the other eventually happening, and a crash between "commit" and "publish" just means the outbox loop catches up on restart — nothing is silently lost or double-counted at the DB layer. See [Delivery Guarantees and Idempotency](delivery-guarantees-and-idempotency.md) for the full mechanics.
+`fraud-service` never publishes `fraud.assessments.v1` directly from the request path. Instead, `Postgres.Evaluate` writes the assessment _and_ an outbox row in the same database transaction, and a separate `service.Outbox` loop polls for unpublished rows every 250ms and publishes them. This decouples the database commit from the Kafka publish: neither can succeed without the other eventually happening, and a crash between "commit" and "publish" just means the outbox loop catches up on restart — nothing is silently lost or double-counted at the DB layer. See [Delivery Guarantees and Idempotency](delivery-guarantees-and-idempotency.md) for the full mechanics.
 
 ## Why labels are a separate topic and consumer group
 

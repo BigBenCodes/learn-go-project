@@ -17,7 +17,7 @@ Everything commits together or nothing does — there's no window where a transa
 
 ## Kafka offsets commit only after success
 
-`stream.Consumer.handleRecord` calls the handler and only commits the record's offset if the handler returns `nil`. If Postgres or Kafka is unreachable, the handler returns a (non-permanent) error, the offset is *not* committed, and the same record will be redelivered — either on the next poll (transient network blip) or after a consumer restart. Combined with the idempotent insert above, redelivery after a partial failure never produces a duplicate assessment.
+`stream.Consumer.handleRecord` calls the handler and only commits the record's offset if the handler returns `nil`. If Postgres or Kafka is unreachable, the handler returns a (non-permanent) error, the offset is _not_ committed, and the same record will be redelivered — either on the next poll (transient network blip) or after a consumer restart. Combined with the idempotent insert above, redelivery after a partial failure never produces a duplicate assessment.
 
 ## Permanent vs. transient failures
 
@@ -30,7 +30,7 @@ This means a downed dependency stalls that consumer (with growing backoff and er
 
 ## The outbox decouples commit from publish
 
-Because the assessment insert and the outbox row insert happen in the same Postgres transaction, "the assessment was persisted" and "an outbox row exists for it" are always true together. The separate `Outbox.Run` loop (`internal/service/outbox.go`) polls every 250ms, fetches up to 100 unpublished rows, publishes each to Kafka, and marks it published — one row at a time, so a crash mid-batch just leaves the remaining rows unpublished for the next tick, never double-published from Kafka's perspective in normal operation (a crash between "Kafka publish succeeded" and "mark published" would republish that one row — the trade-off is at-least-once *outbound* delivery too, consistent with the rest of the pipeline).
+Because the assessment insert and the outbox row insert happen in the same Postgres transaction, "the assessment was persisted" and "an outbox row exists for it" are always true together. The separate `Outbox.Run` loop (`internal/service/outbox.go`) polls every 250ms, fetches up to 100 unpublished rows, publishes each to Kafka, and marks it published — one row at a time, so a crash mid-batch just leaves the remaining rows unpublished for the next tick, never double-published from Kafka's perspective in normal operation (a crash between "Kafka publish succeeded" and "mark published" would republish that one row — the trade-off is at-least-once _outbound_ delivery too, consistent with the rest of the pipeline).
 
 ## What this buys you
 

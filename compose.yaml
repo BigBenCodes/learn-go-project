@@ -39,7 +39,11 @@ services:
     volumes:
       - redpanda-data:/var/lib/redpanda/data
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy -X brokers=localhost:9092"]
+      test:
+        [
+          "CMD-SHELL",
+          "rpk cluster health --exit-when-healthy -X brokers=localhost:9092",
+        ]
       interval: 3s
       timeout: 3s
       retries: 30

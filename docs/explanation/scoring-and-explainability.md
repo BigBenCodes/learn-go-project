@@ -8,17 +8,17 @@
 
 `internal/features.Extract` (`internal/features/features.go`) turns a transaction plus its account's `domain.History` into a `FeatureVector` — nine numeric signals:
 
-| Feature | Derivation |
-| --- | --- |
-| `log_amount` | `log1p(amount_minor / 100)` — dampens the effect of very large amounts |
-| `foreign` | 1 if the merchant's country isn't `GB` |
-| `card_not_present` | 1 if entry mode is `ecommerce` |
-| `risky_merchant` | 1 if merchant category is `crypto`, `gambling`, or `money_transfer` |
-| `nighttime` | 1 if the transaction's UTC hour is before 6 or at/after 23 |
-| `tx_count_10m` | account's transaction count in the last 10 minutes, capped at 10 and normalized to `[0,1]` |
-| `spend_1h` | account's spend in the last hour (major units), capped at 2000 and normalized to `[0,1]` |
-| `new_merchant` | 1 if this is the account's first transaction with this merchant |
-| `new_country` | 1 if this is the account's first transaction in this merchant's country |
+| Feature            | Derivation                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `log_amount`       | `log1p(amount_minor / 100)` — dampens the effect of very large amounts                     |
+| `foreign`          | 1 if the merchant's country isn't `GB`                                                     |
+| `card_not_present` | 1 if entry mode is `ecommerce`                                                             |
+| `risky_merchant`   | 1 if merchant category is `crypto`, `gambling`, or `money_transfer`                        |
+| `nighttime`        | 1 if the transaction's UTC hour is before 6 or at/after 23                                 |
+| `tx_count_10m`     | account's transaction count in the last 10 minutes, capped at 10 and normalized to `[0,1]` |
+| `spend_1h`         | account's spend in the last hour (major units), capped at 2000 and normalized to `[0,1]`   |
+| `new_merchant`     | 1 if this is the account's first transaction with this merchant                            |
+| `new_country`      | 1 if this is the account's first transaction in this merchant's country                    |
 
 `tx_count_10m` and `spend_1h` come from `domain.History`, which `Postgres.Evaluate` computes from prior rows in the same database transaction — they reflect durable state, not in-memory state that would be lost across restarts or inconsistent across service instances.
 

@@ -18,7 +18,7 @@ None of this touches the Go binary. It's a parallel, purely additive pipeline �
 
 The alternative to a static-site generator is hand-written HTML or just shipping `README.md`/`AGENT.md` as-is. Both scale badly once you have >1 page: no shared theme, no cross-page search, no consistent nav. MkDocs solves this by treating docs as data (a `nav:` tree + a directory of Markdown) and a theme as a separate, swappable concern — you're not hand-maintaining `<nav>` HTML across 15 files.
 
-Diataxis was chosen over "one big README" because this project already had a README that mixed a quickstart, an API table, and an architecture narrative in one linear scroll — readable once, hard to scan for "just the API" or "just how consumer groups work" later. Splitting by *reader intent* (I want to get started / I want to do X / I want to look up Y / I want to understand why) rather than by *code structure* is the core bet of that framework.
+Diataxis was chosen over "one big README" because this project already had a README that mixed a quickstart, an API table, and an architecture narrative in one linear scroll — readable once, hard to scan for "just the API" or "just how consumer groups work" later. Splitting by _reader intent_ (I want to get started / I want to do X / I want to look up Y / I want to understand why) rather than by _code structure_ is the core bet of that framework.
 
 ### Context
 
@@ -46,14 +46,14 @@ theme:
       toggle: { icon: material/brightness-4, name: Switch to light mode }
 ```
 
-Two `palette` entries, not one. Each is gated by a `media` query matching the OS preference *and* carries a `toggle` the reader can click to override it. Material's JS persists that override in `localStorage`, so "system default, but overridable" is the resulting behavior — neither entry alone would give you that; you need the pair plus the toggle wiring.
+Two `palette` entries, not one. Each is gated by a `media` query matching the OS preference _and_ carries a `toggle` the reader can click to override it. Material's JS persists that override in `localStorage`, so "system default, but overridable" is the resulting behavior — neither entry alone would give you that; you need the pair plus the toggle wiring.
 
 ```yaml
-  features:
-    - navigation.tabs
-    - content.code.copy
-    - toc.follow
-    # ...
+features:
+  - navigation.tabs
+  - content.code.copy
+  - toc.follow
+  # ...
 ```
 
 Every visible "polish" feature (copy buttons, sticky nav, search highlighting) is an opt-in string here, not a plugin to install — Material ships all of them and gates them behind this list. Nothing to add to `requirements.txt` for any of these.
@@ -78,7 +78,7 @@ nav:
   - Explanation: [...]
 ```
 
-`nav:` is listed explicitly rather than auto-generated from the directory tree. Combined with `navigation.tabs`, these five top-level entries become clickable tabs — the nav structure *is* the Diataxis quadrant selector in the rendered UI, not just an organizational convention in the source tree.
+`nav:` is listed explicitly rather than auto-generated from the directory tree. Combined with `navigation.tabs`, these five top-level entries become clickable tabs — the nav structure _is_ the Diataxis quadrant selector in the rendered UI, not just an organizational convention in the source tree.
 
 ### File 2: `.github/workflows/docs.yml`
 
@@ -97,7 +97,7 @@ concurrency:
   cancel-in-progress: false
 ```
 
-`id-token: write` is the tell that this uses OIDC (OpenID Connect) rather than a personal access token or the default `GITHUB_TOKEN` pushing to a branch. `concurrency.group: pages` means if two pushes land close together, the second run queues rather than racing the first to publish — `cancel-in-progress: false` specifically means it *waits* rather than killing the in-flight deploy, so you never end up serving a half-deployed site.
+`id-token: write` is the tell that this uses OIDC (OpenID Connect) rather than a personal access token or the default `GITHUB_TOKEN` pushing to a branch. `concurrency.group: pages` means if two pushes land close together, the second run queues rather than racing the first to publish — `cancel-in-progress: false` specifically means it _waits_ rather than killing the in-flight deploy, so you never end up serving a half-deployed site.
 
 ```yaml
 jobs:
@@ -125,6 +125,7 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 **Purpose**: 15 content pages, none co-located with the code they document — grouped by reader intent under `tutorials/`, `how-to/`, `reference/`, `explanation/` instead of mirroring `cmd/`/`internal/`.
 
 **Key components**:
+
 - `docs/index.md` — landing page with card-grid links into each quadrant (Material's `grid cards` — pure CSS via `attr_list`/`md_in_html`, no extra plugin).
 - `docs/tutorials/getting-started.md` — the one prescribed golden path (infra-up → service → simulate → fraudctl), no branching.
 - `docs/reference/*.md` — dry tables only (flags, endpoints, metric names), cross-checked line-by-line against the actual Go source rather than paraphrased from the README, so flag names/defaults/env vars can't drift silently from what `cmd/fraud-service/main.go` actually parses.
@@ -136,12 +137,12 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 
 ### Design Patterns Used
 
-| Pattern | Where | Why |
-|---------|-------|-----|
-| Config-as-data (declarative site config) | `mkdocs.yml` | Nav/theme/parser behavior is one reviewable file, not scattered template logic |
-| Content-type separation (Diataxis) | `docs/` directory layout + `nav:` | Matches structure to reader intent, not to code structure |
-| Two-stage pipeline with an artifact handoff | `docs.yml` `build` → `deploy` | Least-privilege: only `deploy` touches the Pages environment/OIDC trust |
-| Fail-fast quality gate | `mkdocs build --strict` | Turns broken links into CI failures instead of silent 404s in production |
+| Pattern                                     | Where                             | Why                                                                            |
+| ------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------ |
+| Config-as-data (declarative site config)    | `mkdocs.yml`                      | Nav/theme/parser behavior is one reviewable file, not scattered template logic |
+| Content-type separation (Diataxis)          | `docs/` directory layout + `nav:` | Matches structure to reader intent, not to code structure                      |
+| Two-stage pipeline with an artifact handoff | `docs.yml` `build` → `deploy`     | Least-privilege: only `deploy` touches the Pages environment/OIDC trust        |
+| Fail-fast quality gate                      | `mkdocs build --strict`           | Turns broken links into CI failures instead of silent 404s in production       |
 
 ### Key Technical Concepts
 
@@ -154,14 +155,17 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 **When to Use**: Once a project has enough content that "where do I put this new paragraph" stops being obvious. For a single-page README on a small project, it's overkill — the split earns its complexity only past a certain size.
 
 **Trade-offs**:
+
 - Pros: readers can jump straight to the quadrant matching their current need; each page type has a narrow, checkable definition of "done."
 - Cons: more files, more nav structure to maintain, some inevitable near-duplication (a How-To and its underlying Explanation page will reference the same mechanism from different angles).
 
 **Alternatives**:
+
 - Single README, sectioned by `##` headers: fine up to a handful of sections; degrades once a reader needs to scroll past unrelated content to find their section.
-- Docusaurus/Sphinx-style "just a tree of pages" with no framework: same tooling category as MkDocs, but without an opinion on *how* to split content, the split tends to re-drift toward "whatever seemed convenient" over time.
+- Docusaurus/Sphinx-style "just a tree of pages" with no framework: same tooling category as MkDocs, but without an opinion on _how_ to split content, the split tends to re-drift toward "whatever seemed convenient" over time.
 
 **Prerequisites to understand this**:
+
 - Markdown: the source format every page is written in.
 - Static site generators generally: the idea that Markdown + a template produces a full site, no server-side rendering per request.
 
@@ -171,18 +175,21 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 
 **Why Used Here**: A Go project has no existing Python/JS toolchain to lean on, and doesn't need one for docs — MkDocs's only dependency is Python + pip, isolated to `requirements.txt`, and it never touches `go.mod`.
 
-**When to Use**: Markdown-first documentation sites where you want a themed, searchable, navigable site without hand-writing HTML. Less suited to docs that need API-reference autogeneration from source (e.g., Python docstrings via `mkdocstrings`, deliberately *not* used here since this is a Go codebase with nothing for a Python autodoc plugin to introspect).
+**When to Use**: Markdown-first documentation sites where you want a themed, searchable, navigable site without hand-writing HTML. Less suited to docs that need API-reference autogeneration from source (e.g., Python docstrings via `mkdocstrings`, deliberately _not_ used here since this is a Go codebase with nothing for a Python autodoc plugin to introspect).
 
 **Trade-offs**:
+
 - Pros: config is one diffable file; theme upgrades are a `pip install --upgrade` away; `mkdocs serve` gives live-reload local preview.
 - Cons: yet another toolchain (Python/pip) alongside Go's, even if only for CI and optional local preview.
 
 **Alternatives**:
+
 - Docusaurus (React/Node-based): heavier toolchain, better suited to projects already in the JS ecosystem or wanting MDX/React components in docs.
 - Hugo: faster builds, Go-based (would match this project's language) but a steeper templating learning curve and no equivalent to Material's out-of-the-box theme polish.
 - Plain GitHub-rendered Markdown (no site at all): zero setup, but no search, no nav, no theme, no custom domain.
 
 **Prerequisites to understand this**:
+
 - YAML: the format `mkdocs.yml` is written in.
 - Static vs. dynamic sites: the site is pre-built HTML, not rendered per-request by a server.
 
@@ -195,14 +202,17 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 **When to Use**: Any GitHub Pages deployment where you don't have another consumer relying on the `gh-pages` branch existing (some older tools/badges assumed that branch as their integration point).
 
 **Trade-offs**:
+
 - Pros: first-class GitHub "Environment" (`github-pages`) with deployment history and a URL surfaced directly in the Actions UI and PR checks; least-privilege by construction.
 - Cons: requires the one-time manual repo setting (Settings → Pages → Source → "GitHub Actions") — cannot be set via a file in the repo, which is exactly the step this session needed the repo owner to do by hand before the first `deploy` job could succeed.
 
 **Alternatives**:
+
 - `mkdocs gh-deploy` / `peaceiris/actions-gh-pages`: pushes to `gh-pages` branch. Simpler mental model, but broader token scope and an extra branch to reason about.
 - Third-party static hosts (Netlify, Vercel, Cloudflare Pages): more features (preview deployments per PR) at the cost of an external account/service outside GitHub.
 
 **Prerequisites to understand this**:
+
 - GitHub Actions jobs/steps/permissions: the base mechanics being configured here.
 - OIDC (OpenID Connect) in brief: a token exchange where GitHub's Actions runner proves its identity to get a short-lived credential, instead of a long-lived secret being stored anywhere.
 
@@ -210,15 +220,17 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 
 **What**: A Markdown extension that lets you register a fenced-code-block language name (` ```mermaid `) to be treated as an embeddable non-code block rather than syntax-highlighted code — Material's bundled JS then finds every `<pre class="mermaid">` on the page and renders it as an SVG diagram in the browser.
 
-**Why Used Here**: The project's existing architecture diagram was ASCII art in `README.md`/`AGENT.md` — fine in a terminal, static and non-interactive on a themed web page. Converting it to Mermaid *only* in `docs/explanation/architecture-overview.md` (leaving the ASCII untouched in README/AGENT.md, which are read via `cat`/terminal/agent context where Mermaid can't render) gets a properly arrowed, theme-aware diagram exactly where it's actually rendered.
+**Why Used Here**: The project's existing architecture diagram was ASCII art in `README.md`/`AGENT.md` — fine in a terminal, static and non-interactive on a themed web page. Converting it to Mermaid _only_ in `docs/explanation/architecture-overview.md` (leaving the ASCII untouched in README/AGENT.md, which are read via `cat`/terminal/agent context where Mermaid can't render) gets a properly arrowed, theme-aware diagram exactly where it's actually rendered.
 
 **When to Use**: Any docs site with an SSG that supports it, for diagrams that benefit from being data (text you can diff and edit) rather than a checked-in image file.
 
 **Trade-offs**:
+
 - Pros: diagrams are plain text, diffable in PRs, no image asset to regenerate and re-upload.
 - Cons: renders client-side via JS — a reader with JS disabled sees the raw Mermaid source; more limited layout control than hand-drawn/exported diagrams for complex topologies.
 
 **Prerequisites to understand this**:
+
 - Markdown fenced code blocks (` ``` `): the base syntax being repurposed.
 - Mermaid syntax: a small text DSL for flowcharts/sequence diagrams/etc.
 
@@ -238,18 +250,18 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 
 - GitHub Environments: what `environment: { name: github-pages }` actually is and how deployment protection rules work on them.
 - `pymdown-extensions` full catalog: the project only turned on a subset (`admonition`, `tabbed`, `details`, `snippets`, `emoji`, `highlight`) — worth skimming the rest.
-- Versioned docs (e.g., the `mike` plugin): relevant if this project ever needs to publish docs for multiple released versions side by side — deliberately *not* set up here since there's only ever one version of this project live at a time.
+- Versioned docs (e.g., the `mike` plugin): relevant if this project ever needs to publish docs for multiple released versions side by side — deliberately _not_ set up here since there's only ever one version of this project live at a time.
 
 ---
 
 ## Related Code in This Project
 
-| File | Relationship |
-|------|--------------|
-| `Makefile` (`docs-serve`, `docs-build`) | Local equivalents of what CI runs — `docs-build` runs the exact `mkdocs build --strict` the workflow uses, so a CI failure is reproducible locally first. |
-| `requirements.txt` | Pins `mkdocs-material`/`pymdown-extensions` version ranges consumed by both the Makefile targets and the CI workflow's `pip install -r requirements.txt`. |
-| `.gitignore` (`/site/`, `.venv/`) | `site/` is `mkdocs build`'s output directory — never committed; CI rebuilds it fresh every run. |
-| `README.md` / `AGENT.md` | Source material the `docs/` prose was drawn from and cross-checked against; their ASCII architecture diagram is the one the Mermaid version in `explanation/architecture-overview.md` replaces *for the docs site only*. |
+| File                                    | Relationship                                                                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Makefile` (`docs-serve`, `docs-build`) | Local equivalents of what CI runs — `docs-build` runs the exact `mkdocs build --strict` the workflow uses, so a CI failure is reproducible locally first.                                                                |
+| `requirements.txt`                      | Pins `mkdocs-material`/`pymdown-extensions` version ranges consumed by both the Makefile targets and the CI workflow's `pip install -r requirements.txt`.                                                                |
+| `.gitignore` (`/site/`, `.venv/`)       | `site/` is `mkdocs build`'s output directory — never committed; CI rebuilds it fresh every run.                                                                                                                          |
+| `README.md` / `AGENT.md`                | Source material the `docs/` prose was drawn from and cross-checked against; their ASCII architecture diagram is the one the Mermaid version in `explanation/architecture-overview.md` replaces _for the docs site only_. |
 
 ---
 
@@ -259,9 +271,9 @@ Two jobs, not one, on purpose: `build` produces an artifact and has no deploy pe
 2. **Deeper dive**: read `docs/reference/configuration.md` side-by-side with `cmd/fraud-service/main.go` — every flag in that table has a one-line source in the Go file it documents; this is the discipline that keeps a Reference page from drifting out of sync with the code.
 3. **Common pitfalls**:
    - `repo_url`/`site_url` in `mkdocs.yml` are just strings — they don't validate against the actual GitHub remote. This session's ownership transfer to `BigBenCodes` required manually editing both; a stale `repo_url` after a fork/rename/transfer is an easy thing to miss since nothing fails loudly.
-   - `mkdocs build --strict` only catches *internal* broken links (nav entries, cross-page references) — it won't catch a typo'd external URL. Consider a link-checker step if the docs start linking out more.
+   - `mkdocs build --strict` only catches _internal_ broken links (nav entries, cross-page references) — it won't catch a typo'd external URL. Consider a link-checker step if the docs start linking out more.
 
 ---
 
-*This deep dive was generated by AntiVibe - the anti-vibecoding learning framework.*
-*Learn what AI writes, not just accept it.*
+_This deep dive was generated by AntiVibe - the anti-vibecoding learning framework._
+_Learn what AI writes, not just accept it._

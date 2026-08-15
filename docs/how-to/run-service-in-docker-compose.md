@@ -12,12 +12,12 @@ This builds the `fraud-service` image from the repo's `Dockerfile` and starts it
 
 The containerized service is wired to talk to the other containers over the Compose network, not to `localhost`:
 
-| Variable | Value in Compose | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | `postgres://fraud:fraud@postgres:5432/fraud?sslmode=disable` | Postgres inside the network |
-| `KAFKA_BROKERS` | `redpanda:9092` | Redpanda's internal listener |
-| `HTTP_ADDRESS` | `:8080` | published to host port 8080 |
-| `MODEL_PATH` | `/app/configs/model.json` | baked into the image by the Dockerfile |
+| Variable        | Value in Compose                                             | Purpose                                |
+| --------------- | ------------------------------------------------------------ | -------------------------------------- |
+| `DATABASE_URL`  | `postgres://fraud:fraud@postgres:5432/fraud?sslmode=disable` | Postgres inside the network            |
+| `KAFKA_BROKERS` | `redpanda:9092`                                              | Redpanda's internal listener           |
+| `HTTP_ADDRESS`  | `:8080`                                                      | published to host port 8080            |
+| `MODEL_PATH`    | `/app/configs/model.json`                                    | baked into the image by the Dockerfile |
 
 ## Why this differs from `make service`
 

@@ -4,30 +4,36 @@ Served by `internal/httpapi.Server` on the address set by `--http-address`/`HTTP
 
 ## Endpoints
 
-| Method & Path | Purpose |
-| --- | --- |
-| `GET /healthz` | Process liveness. Always `200 {"status":"ok"}` if the process is running. |
-| `GET /readyz` | Readiness. Pings Postgres with a 1s timeout; `200 {"status":"ready"}` or `503 {"error":"database unavailable"}`. |
-| `GET /v1/transactions` | Cursor-paginated list of scored transactions. |
-| `GET /v1/transactions/{id}` | A single transaction, its assessment, and its label if present. |
-| `GET /v1/model-metrics` | Confusion-matrix-derived model quality metrics. |
-| `GET /metrics` | Prometheus-format system metrics. |
+| Method & Path               | Purpose                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`              | Process liveness. Always `200 {"status":"ok"}` if the process is running.                                        |
+| `GET /readyz`               | Readiness. Pings Postgres with a 1s timeout; `200 {"status":"ready"}` or `503 {"error":"database unavailable"}`. |
+| `GET /v1/transactions`      | Cursor-paginated list of scored transactions.                                                                    |
+| `GET /v1/transactions/{id}` | A single transaction, its assessment, and its label if present.                                                  |
+| `GET /v1/model-metrics`     | Confusion-matrix-derived model quality metrics.                                                                  |
+| `GET /metrics`              | Prometheus-format system metrics.                                                                                |
 
 ## `GET /v1/transactions`
 
 ### Query parameters
 
-| Parameter | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `limit` | int | 20 | Must be 1–100; out of range returns `400`. |
-| `action` | string | (none) | One of `no_action`, `review`, `escalate`. Invalid values return `400`. |
-| `cursor` | string | (none) | Opaque token from a previous response's `next_cursor`. Invalid tokens return `400`. |
+| Parameter | Type   | Default | Notes                                                                               |
+| --------- | ------ | ------- | ----------------------------------------------------------------------------------- |
+| `limit`   | int    | 20      | Must be 1–100; out of range returns `400`.                                          |
+| `action`  | string | (none)  | One of `no_action`, `review`, `escalate`. Invalid values return `400`.              |
+| `cursor`  | string | (none)  | Opaque token from a previous response's `next_cursor`. Invalid tokens return `400`. |
 
 ### Response
 
 ```json
 {
-  "transactions": [ { "transaction": { "...": "..." }, "assessment": { "...": "..." }, "label": null } ],
+  "transactions": [
+    {
+      "transaction": { "...": "..." },
+      "assessment": { "...": "..." },
+      "label": null
+    }
+  ],
   "next_cursor": "base64-token-or-empty-string"
 }
 ```
@@ -42,9 +48,9 @@ Returns one `TransactionRecord`. `404 {"error":"transaction not found"}` if the 
 
 ### Query parameters
 
-| Parameter | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `model_version` | string | (none) | Scopes the confusion matrix to one model version. Omit to aggregate across all versions seen. |
+| Parameter       | Type   | Default | Notes                                                                                         |
+| --------------- | ------ | ------- | --------------------------------------------------------------------------------------------- |
+| `model_version` | string | (none)  | Scopes the confusion matrix to one model version. Omit to aggregate across all versions seen. |
 
 ### Response
 

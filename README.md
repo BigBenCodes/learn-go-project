@@ -53,14 +53,14 @@ To stop the infrastructure without deleting its data, run `make infra-down`. Use
 
 ## API
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /healthz` | Process liveness |
-| `GET /readyz` | Postgres readiness |
-| `GET /v1/transactions?limit=20&action=review&cursor=...` | Cursor-paginated decisions |
-| `GET /v1/transactions/{id}` | Transaction, signals, score, action, model version, and label |
-| `GET /v1/model-metrics?model_version=...` | Confusion matrix, precision, recall, false-positive rate, and label coverage |
-| `GET /metrics` | Prometheus-format system metrics |
+| Endpoint                                                 | Purpose                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET /healthz`                                           | Process liveness                                                             |
+| `GET /readyz`                                            | Postgres readiness                                                           |
+| `GET /v1/transactions?limit=20&action=review&cursor=...` | Cursor-paginated decisions                                                   |
+| `GET /v1/transactions/{id}`                              | Transaction, signals, score, action, model version, and label                |
+| `GET /v1/model-metrics?model_version=...`                | Confusion matrix, precision, recall, false-positive rate, and label coverage |
+| `GET /metrics`                                           | Prometheus-format system metrics                                             |
 
 ## Model and features
 

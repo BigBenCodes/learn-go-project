@@ -23,4 +23,4 @@ The `-v` flag additionally deletes the named volumes. Postgres comes back empty 
 Use this when you want a genuinely clean slate: a fresh simulator run without old transactions mixed in, or to test that migrations and topic creation work from nothing.
 
 !!! warning
-    `-v` is destructive and cannot be undone. There's no confirmation prompt.
+`-v` is destructive and cannot be undone. There's no confirmation prompt.
