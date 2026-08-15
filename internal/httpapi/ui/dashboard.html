@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Service — Metrics</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1216;
+    --panel: #171b21;
+    --border: #262c35;
+    --text: #e6e9ef;
+    --muted: #8b93a1;
+    --accent: #4f8cff;
+    --good: #34c77b;
+    --bad: #ef5a5a;
+    --warn: #e0a233;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header a { color: var(--muted); font-size: 12px; text-decoration: none; }
+  header a:hover { color: var(--accent); }
+  main { padding: 24px 28px 60px; max-width: 1200px; margin: 0 auto; }
+  .toolbar {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  select, input, button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  label.check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .confusion {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .confusion .card .value.tp, .confusion .card .value.tn { color: var(--good); }
+  .confusion .card .value.fp, .confusion .card .value.fn { color: var(--bad); }
+  section h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+    margin: 28px 0 10px;
+  }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #1d222a; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge.no_action { background: #1f3a2c; color: var(--good); }
+  .badge.review { background: #3a2f14; color: var(--warn); }
+  .badge.escalate { background: #3a1c1c; color: var(--bad); }
+  .empty { color: var(--muted); text-align: center; padding: 24px; }
+  .pager { display: flex; justify-content: flex-end; margin-top: 10px; }
+  .error { color: var(--bad); font-size: 13px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fraud Service</h1>
+  <a href="/metrics" target="_blank" rel="noopener">raw prometheus metrics ↗</a>
+</header>
+<main>
+  <div class="toolbar">
+    <label>Model version
+      <input id="model-version" type="text" placeholder="all versions" style="width:160px">
+    </label>
+    <label>Action
+      <select id="action-filter">
+        <option value="">all</option>
+        <option value="no_action">no_action</option>
+        <option value="review">review</option>
+        <option value="escalate">escalate</option>
+      </select>
+    </label>
+    <button id="refresh-btn" class="primary">Refresh</button>
+    <label class="check"><input id="auto-refresh" type="checkbox" checked> auto-refresh 10s</label>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div id="error" class="error" hidden></div>
+
+  <section>
+    <h2>Model performance</h2>
+    <div class="cards">
+      <div class="card"><div class="label">Total assessments</div><div class="value" id="m-total">—</div></div>
+      <div class="card"><div class="label">Labelled</div><div class="value" id="m-labelled">—</div></div>
+      <div class="card"><div class="label">Label coverage</div><div class="value" id="m-coverage">—</div></div>
+      <div class="card"><div class="label">Precision</div><div class="value" id="m-precision">—</div></div>
+      <div class="card"><div class="label">Recall</div><div class="value" id="m-recall">—</div></div>
+      <div class="card"><div class="label">False positive rate</div><div class="value" id="m-fpr">—</div></div>
+    </div>
+    <div class="confusion">
+      <div class="card"><div class="label">True positive</div><div class="value tp" id="m-tp">—</div></div>
+      <div class="card"><div class="label">False positive</div><div class="value fp" id="m-fp">—</div></div>
+      <div class="card"><div class="label">True negative</div><div class="value tn" id="m-tn">—</div></div>
+      <div class="card"><div class="label">False negative</div><div class="value fn" id="m-fn">—</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent transactions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Transaction</th><th>Occurred</th><th>Amount</th><th>Merchant</th>
+          <th>Risk score</th><th>Action</th><th>Model</th><th>Label</th>
+        </tr>
+      </thead>
+      <tbody id="tx-body"></tbody>
+    </table>
+    <div class="pager">
+      <button id="load-more">Load more</button>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var state = { cursor: "", txs: [], timer: null };
+
+  var modelVersionInput = document.getElementById("model-version");
+  var actionFilter = document.getElementById("action-filter");
+  var statusEl = document.getElementById("status");
+  var errorEl = document.getElementById("error");
+  var txBody = document.getElementById("tx-body");
+  var loadMoreBtn = document.getElementById("load-more");
+  var autoRefresh = document.getElementById("auto-refresh");
+
+  function showError(msg) {
+    if (!msg) { errorEl.hidden = true; errorEl.textContent = ""; return; }
+    errorEl.hidden = false; errorEl.textContent = msg;
+  }
+
+  function fmtPct(v) { return (v * 100).toFixed(1) + "%"; }
+  function fmtMoney(minor, currency) { return (minor / 100).toFixed(2) + " " + currency; }
+  function fmtTime(iso) {
+    try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+  }
+
+  function loadMetrics() {
+    var params = new URLSearchParams();
+    var mv = modelVersionInput.value.trim();
+    if (mv) params.set("model_version", mv);
+    return fetch("/v1/model-metrics?" + params.toString())
+      .then(function (r) { if (!r.ok) throw new Error("model metrics: " + r.status); return r.json(); })
+      .then(function (m) {
+        document.getElementById("m-total").textContent = m.total_assessments;
+        document.getElementById("m-labelled").textContent = m.labelled;
+        document.getElementById("m-coverage").textContent = fmtPct(m.label_coverage);
+        document.getElementById("m-precision").textContent = fmtPct(m.precision);
+        document.getElementById("m-recall").textContent = fmtPct(m.recall);
+        document.getElementById("m-fpr").textContent = fmtPct(m.false_positive_rate);
+        document.getElementById("m-tp").textContent = m.true_positive;
+        document.getElementById("m-fp").textContent = m.false_positive;
+        document.getElementById("m-tn").textContent = m.true_negative;
+        document.getElementById("m-fn").textContent = m.false_negative;
+      });
+  }
+
+  function renderTx(tx) {
+    var t = tx.transaction, a = tx.assessment, l = tx.label;
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + t.transaction_id + "</td>" +
+      "<td>" + fmtTime(t.occurred_at) + "</td>" +
+      "<td>" + fmtMoney(t.amount_minor, t.currency) + "</td>" +
+      "<td>" + t.merchant.id + " (" + t.merchant.category + ")</td>" +
+      "<td>" + a.risk_score.toFixed(3) + "</td>" +
+      "<td><span class=\"badge " + a.recommended_action + "\">" + a.recommended_action + "</span></td>" +
+      "<td>" + a.model_version + "</td>" +
+      "<td>" + (l ? (l.is_fraud ? "fraud" : "legit") : "—") + "</td>";
+    txBody.appendChild(tr);
+  }
+
+  function loadTransactions(reset) {
+    if (reset) { state.cursor = ""; state.txs = []; txBody.innerHTML = ""; }
+    var params = new URLSearchParams();
+    params.set("limit", "20");
+    if (actionFilter.value) params.set("action", actionFilter.value);
+    if (state.cursor) params.set("cursor", state.cursor);
+    return fetch("/v1/transactions?" + params.toString())
+      .then(function (r) { if (!r.ok) throw new Error("transactions: " + r.status); return r.json(); })
+      .then(function (page) {
+        (page.transactions || []).forEach(renderTx);
+        state.cursor = page.next_cursor || "";
+        loadMoreBtn.disabled = !state.cursor;
+        if (txBody.children.length === 0) {
+          var tr = document.createElement("tr");
+          tr.innerHTML = "<td colspan=\"8\" class=\"empty\">No transactions</td>";
+          txBody.appendChild(tr);
+        }
+      });
+  }
+
+  function refresh(reset) {
+    showError(null);
+    statusEl.textContent = "loading…";
+    Promise.all([loadMetrics(), loadTransactions(reset !== false)])
+      .then(function () { statusEl.textContent = "updated " + new Date().toLocaleTimeString(); })
+      .catch(function (err) { statusEl.textContent = ""; showError(err.message); });
+  }
+
+  function scheduleAutoRefresh() {
+    if (state.timer) clearInterval(state.timer);
+    if (autoRefresh.checked) {
+      state.timer = setInterval(function () { refresh(true); }, 10000);
+    }
+  }
+
+  document.getElementById("refresh-btn").addEventListener("click", function () { refresh(true); });
+  modelVersionInput.addEventListener("change", function () { refresh(true); });
+  actionFilter.addEventListener("change", function () { refresh(true); });
+  loadMoreBtn.addEventListener("click", function () { loadTransactions(false); });
+  autoRefresh.addEventListener("change", scheduleAutoRefresh);
+
+  refresh(true);
+  scheduleAutoRefresh();
+})();
+</script>
+</body>
+</html>

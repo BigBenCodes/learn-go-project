@@ -37,6 +37,22 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDashboardServesHTML(t *testing.T) {
+	server := New(":0", fakeRepository{}, http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if ct := response.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("content-type = %q, want text/html; charset=utf-8", ct)
+	}
+	if response.Body.Len() == 0 {
+		t.Fatal("dashboard body is empty")
+	}
+}
+
 func TestListRejectsInvalidLimit(t *testing.T) {
 	server := New(":0", fakeRepository{}, http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/v1/transactions?limit=101", nil)

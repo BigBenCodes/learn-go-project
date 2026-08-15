@@ -32,6 +32,7 @@ type Server struct {
 func New(address string, repository Repository, metricsHandler http.Handler, logger *slog.Logger) *Server {
 	s := &Server{repository: repository, logger: logger}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", s.dashboard)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /v1/transactions", s.listTransactions)
