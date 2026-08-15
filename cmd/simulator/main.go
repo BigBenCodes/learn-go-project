@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +18,22 @@ import (
 type queuedLabel struct {
 	label domain.FraudLabel
 	due   time.Time
+}
+
+// defaultEventStep spaces event timestamps when pacing is disabled (--rate 0).
+const defaultEventStep = 10 * time.Millisecond
+
+// eventStep picks the spacing between successive event timestamps. It follows
+// the pacing interval when there is one, but must never return zero: every
+// history feature in store.Evaluate is computed with `occurred_at < $2`, so a
+// run in which all events share one timestamp scores every transaction against
+// an empty history — tx_count_10m and spend_1h pinned at 0, new_merchant and
+// new_country pinned at 1.
+func eventStep(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return defaultEventStep
+	}
+	return interval
 }
 
 func main() {
@@ -55,7 +70,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	producer, err := stream.NewProducer(strings.Split(*brokersRaw, ","))
+	producer, err := stream.NewProducer(stream.ParseBrokers(*brokersRaw))
 	if err != nil {
 		return err
 	}
@@ -67,10 +82,40 @@ func run() error {
 	labelErr := make(chan error, 1)
 	go func() { labelErr <- publishLabels(ctx, producer, labels) }()
 
+	// stop closes the label queue and waits for publishLabels to finish before
+	// returning. Without the wait, the deferred producer.Close() above can fire
+	// while that goroutine is still inside producer.Publish.
+	stop := func(cause error) error {
+		if cause != nil {
+			// Cut the publisher short rather than letting a failed run wait out
+			// the label delay for every row still queued. On a clean finish we
+			// deliberately do not cancel, so those labels still get published.
+			cancel()
+		}
+		close(labels)
+		labelResult := <-labelErr
+		if cause != nil {
+			return cause
+		}
+		if labelResult != nil && ctx.Err() == nil {
+			return labelResult
+		}
+		return nil
+	}
+	// failed reports an error from the already-exited publishLabels goroutine.
+	// Its result is spent, so stop must not be called on these paths.
+	failed := func(err error) error {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+
 	interval := time.Duration(0)
 	if *rate > 0 {
 		interval = time.Duration(float64(time.Second) / *rate)
 	}
+	step := eventStep(interval)
 	emitted := 0
 	for *count == 0 || emitted < *count {
 		if emitted > 0 && interval > 0 {
@@ -79,32 +124,31 @@ func run() error {
 			case <-timer.C:
 			case err := <-labelErr:
 				timer.Stop()
-				return err
+				return failed(err)
 			case <-ctx.Done():
 				timer.Stop()
-				close(labels)
-				return nil
+				return stop(nil)
 			}
 		}
-		occurredAt := start.Add(time.Duration(emitted) * interval)
+		occurredAt := start.Add(time.Duration(emitted) * step)
 		tx, label := generator.Next(occurredAt, *labelDelay)
-		payload, _ := json.Marshal(tx)
+		payload, err := json.Marshal(tx)
+		if err != nil {
+			return stop(fmt.Errorf("encode transaction %s: %w", tx.TransactionID, err))
+		}
 		if err := producer.Publish(ctx, stream.TransactionsTopic, tx.AccountID, payload); err != nil {
-			close(labels)
-			return err
+			return stop(err)
 		}
 		select {
 		case labels <- queuedLabel{label: label, due: time.Now().Add(*labelDelay)}:
 		case err := <-labelErr:
-			return err
+			return failed(err)
 		case <-ctx.Done():
-			close(labels)
-			return nil
+			return stop(nil)
 		}
 		emitted++
 	}
-	close(labels)
-	if err := <-labelErr; err != nil && ctx.Err() == nil {
+	if err := stop(nil); err != nil {
 		return err
 	}
 	fmt.Printf("published %d transactions and labels\n", emitted)
@@ -123,7 +167,10 @@ func publishLabels(ctx context.Context, producer *stream.Producer, labels <-chan
 				return ctx.Err()
 			}
 		}
-		payload, _ := json.Marshal(queued.label)
+		payload, err := json.Marshal(queued.label)
+		if err != nil {
+			return fmt.Errorf("encode label %s: %w", queued.label.TransactionID, err)
+		}
 		if err := producer.Publish(ctx, stream.LabelsTopic, queued.label.TransactionID, payload); err != nil {
 			return err
 		}

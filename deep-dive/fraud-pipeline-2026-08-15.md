@@ -671,6 +671,17 @@ Sub-command CLI using nested `flag.FlagSet` — the standard-library way to get 
 
 Ordered by how much they would matter if this ran for real. Nothing here is currently causing a test failure — `go vet` is clean and `go test -race ./...` passes.
 
+> **Superseded in part (2026-08-15).** A later full-codebase review fixed several
+> of the items below and found others this document missed — including a stored
+> XSS in the dashboard and an `ON CONFLICT` scoping bug that could wedge a
+> partition permanently. **Finding 13 was fixed, and the justification recorded
+> for it here is wrong**: the `ctx.Err()` guard only runs at the top of
+> `handleRecord`'s retry loop, so it does not cover a worker already inside the
+> handler. Findings 6, 7, 10, 11 and 14 were also revisited. This section is kept
+> as the snapshot it was; see
+> [`docs/explanation/code-review-log.md`](../docs/explanation/code-review-log.md)
+> for the current state.
+
 **1. No `OnPartitionsRevoked` handler with manual commits** — `stream/kafka.go:76-86`
 The consumer sets `kgo.DisableAutoCommit()` and commits manually, but registers no revoke hook. franz-go's own guidance is explicit: with manual commits you must either commit in `OnPartitionsRevoked` or abandon in-flight work after a revoke. During a rebalance, worker goroutines can still be mid-`handleRecord` on partitions that have moved to another member, and their subsequent `CommitRecords` can rewind or clobber the new owner's offsets.
 _Why it is invisible today_: a single service instance never rebalances. _Why it is survivable even then_: the `ON CONFLICT DO NOTHING` idempotency absorbs the resulting duplicate processing — data stays correct, offsets get messy. This is a good illustration of defence in depth, but it is the first thing to fix before running two replicas.

@@ -6,7 +6,7 @@ Kafka gives "at-least-once" delivery by default: a consumer restart, rebalance, 
 
 `Postgres.Evaluate` (`internal/store/postgres.go`) does all of the following inside a single Postgres transaction:
 
-1. Insert the raw transaction with `ON CONFLICT DO NOTHING` on its primary key.
+1. Insert the raw transaction with `ON CONFLICT (transaction_id) DO NOTHING`. The conflict target is named explicitly: `transactions.event_id` also carries a `UNIQUE` constraint, and a bare `ON CONFLICT DO NOTHING` would absorb that violation too, making step 2 mistake a malformed event for a redelivery. See [Code Review Log](code-review-log.md#2-unscoped-on-conflict-wedged-a-partition-forever-high).
 2. If that insert affected zero rows, the transaction already exists — fetch and return its existing assessment instead of scoring again. This is the idempotency check: a redelivered Kafka record becomes a no-op read, not a duplicate write.
 3. Otherwise, query durable history (10-minute transaction count, 1-hour spend, seen-merchant/seen-country flags) from prior rows in the same table.
 4. Invoke the scoring callback (feature extraction → model score → policy decision) with that history.
@@ -26,11 +26,15 @@ Everything commits together or nothing does — there's no window where a transa
 - **Permanent** — wrapped in `stream.Permanent(err)`, used for JSON decode failures and `domain` validation failures (malformed schema version, missing IDs, unsupported currency, etc.). These can never succeed on retry, so the record is published to `fraud.dead-letter.v1` with the original payload and error, then its offset is committed — the consumer moves past it rather than retrying forever.
 - **Transient** — anything else (a down Postgres, a Kafka write failure). These retry with exponential backoff starting at 100ms and capping at 5s, without committing the offset, so the same record is retried indefinitely until it succeeds or the service is stopped.
 
+The store participates in that classification. `store.ErrUnprocessable` tags writes that can never succeed on retry — a Postgres unique violation (SQLSTATE `23505`) against a constraint other than the idempotency key, or a duplicate transaction whose assessment is missing — and `service.Processor` converts those to `stream.Permanent` so they are dead-lettered instead of retried. The distinction is deliberate: a *down database* must keep retrying forever, and still does. Only a genuine data conflict is parked.
+
 This means a downed dependency stalls that consumer (with growing backoff and error logs) rather than dropping data, while a genuinely malformed event doesn't block the whole partition forever.
 
 ## The outbox decouples commit from publish
 
-Because the assessment insert and the outbox row insert happen in the same Postgres transaction, "the assessment was persisted" and "an outbox row exists for it" are always true together. The separate `Outbox.Run` loop (`internal/service/outbox.go`) polls every 250ms, fetches up to 100 unpublished rows, publishes each to Kafka, and marks it published — one row at a time, so a crash mid-batch just leaves the remaining rows unpublished for the next tick, never double-published from Kafka's perspective in normal operation (a crash between "Kafka publish succeeded" and "mark published" would republish that one row — the trade-off is at-least-once _outbound_ delivery too, consistent with the rest of the pipeline).
+Because the assessment insert and the outbox row insert happen in the same Postgres transaction, "the assessment was persisted" and "an outbox row exists for it" are always true together. The separate `Outbox.Run` loop (`internal/service/outbox.go`) polls every 250ms and calls `Postgres.PublishOutbox`, which claims up to 100 unpublished rows with `FOR UPDATE SKIP LOCKED`, publishes each to Kafka, and writes `published_at` — all inside one transaction.
+
+The row claim is what makes more than one replica safe: a second service's outbox loop skips the rows this transaction holds rather than publishing them a second time. The cost is that a pool connection stays checked out for the duration of the batch's Kafka writes, which is the price of publishing _then_ marking. That ordering is deliberate — a crash between "Kafka publish succeeded" and "mark published" republishes that one row, so outbound delivery is at-least-once, consistent with the rest of the pipeline. Marking first would make it at-most-once and drop events instead.
 
 ## What this buys you
 

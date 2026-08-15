@@ -30,6 +30,7 @@ go run ./cmd/fraudctl list --action escalate
 go run ./cmd/fraudctl show tx-42-000000001
 go run ./cmd/fraudctl stats
 curl localhost:8080/metrics
+go run ./cmd/fraud-service --log-level debug   # or LOG_LEVEL=debug; enables request tracing
 docker compose --profile app up --build   # run fraud-service itself in Compose
 ```
 
@@ -56,18 +57,54 @@ Three binaries in `cmd/`: `fraud-service` (the consumer/API daemon), `simulator`
 **Data flow and invariants, in `internal/service/processor.go` + `internal/store/postgres.go`:**
 
 - Transactions are keyed by account ID; Kafka partitions are processed concurrently by `stream.Consumer` (worker pool keyed on `partition % workers`), but records within one partition are handled and committed in order — ordering per account is preserved as long as the simulator/producer partitions consistently by account.
-- Each transaction is handled inside one Postgres transaction (`Postgres.Evaluate`): insert the raw event with `ON CONFLICT DO NOTHING` for idempotency, compute durable history features from prior rows in the same tx, invoke the scoring callback, insert the assessment, and insert an outbox row — all committed atomically. Kafka offsets are only committed by `stream.Consumer` after the handler returns successfully, so a redelivered event is a no-op (detected via the `ON CONFLICT` producing zero rows affected) rather than a duplicate assessment.
-- The outbox (`internal/service/outbox.go`) is a separate poll loop (250ms tick) that publishes unpublished rows to `fraud.assessments.v1` and marks them published — decoupling DB commit from Kafka publish so neither can be lost independently.
-- `stream.Consumer.handleRecord` distinguishes permanent vs transient failures: wrap an error in `stream.Permanent(...)` (used for decode/validation failures) to route the record to `fraud.dead-letter.v1` and commit past it; anything else retries with exponential backoff (100ms → 5s cap) without committing, so a downed Postgres/Kafka just stalls and retries rather than dropping data.
+- Each transaction is handled inside one Postgres transaction (`Postgres.Evaluate`): insert the raw event with `ON CONFLICT (transaction_id) DO NOTHING` for idempotency, compute durable history features from prior rows in the same tx, invoke the scoring callback, insert the assessment, and insert an outbox row — all committed atomically. Kafka offsets are only committed by `stream.Consumer` after the handler returns successfully, so a redelivered event is a no-op (detected via the `ON CONFLICT` producing zero rows affected) rather than a duplicate assessment. **Always name the conflict target.** `transactions.event_id` and `fraud_labels.event_id` also carry `UNIQUE` constraints, and a bare `ON CONFLICT DO NOTHING` absorbs those too — which makes the zero-rows-affected branch misread a bad event as a redelivery.
+- The outbox (`internal/service/outbox.go`) is a separate poll loop (250ms tick) calling `Postgres.PublishOutbox`, which claims rows with `FOR UPDATE SKIP LOCKED`, publishes to `fraud.assessments.v1`, and marks them published inside one transaction — decoupling DB commit from Kafka publish so neither can be lost independently, and keeping a second replica from republishing the same rows.
+- `stream.Consumer.handleRecord` distinguishes permanent vs transient failures: wrap an error in `stream.Permanent(...)` (used for decode/validation failures) to route the record to `fraud.dead-letter.v1` and commit past it; anything else retries with exponential backoff (100ms → 5s cap) without committing, so a downed Postgres/Kafka just stalls and retries rather than dropping data. Because that retry is unbounded and a worker owns a whole partition, misclassifying a permanently-bad event as transient stalls the partition forever — `store.ErrUnprocessable` / `store.IsUnprocessable` exist so the store can flag data conflicts the processor should dead-letter.
+- `stream.Consumer.Run` joins its worker goroutines before returning (cancel, close the job channels, then `wg.Wait()`). Callers close the Kafka client and the pgx pool as soon as it returns, so anything that skips the join lets in-flight handlers touch closed resources.
 - Labels arrive on a separate topic/consumer group (`fraud-label-evaluator-v1`) than the model can ever read, by design — this keeps scoring from leaking ground truth and lets label delay be simulated independently.
 
 **Scoring:** `internal/features.Extract` turns a transaction + `domain.History` into a `FeatureVector` (log amount, foreign/card-not-present/risky-merchant/nighttime flags, recent tx count/spend, new-merchant/new-country flags). `internal/model.Logistic` loads `configs/model.json` (versioned intercept + weights) and returns a probability plus per-feature `Signal` contributions sorted by magnitude — every score is explainable back to its inputs. `internal/policy.Thresholds` then maps the score to `no_action` / `review` / `escalate`; these are recommendations, not authorization decisions, since the pipeline is asynchronous.
 
 **Interfaces for testability:** `service.Processor` depends on `Scorer` and `Repository` interfaces (not concrete `model`/`store` types), and `service.Outbox` depends on `OutboxRepository`/`Publisher` — swap in fakes for unit tests rather than standing up Postgres/Kafka. `store.Postgres` and `stream.Producer`/`Consumer` are the only concrete implementations.
 
-**HTTP API** (`internal/httpapi`): `/healthz`, `/readyz` (Postgres ping), `/v1/transactions` (cursor-paginated by `(occurred_at, transaction_id)`, filterable by `action`), `/v1/transactions/{id}`, `/v1/model-metrics?model_version=...` (confusion matrix computed in SQL in `Postgres.ModelMetrics`), `/metrics` (Prometheus).
+**HTTP API** (`internal/httpapi`): `/healthz`, `/readyz` (Postgres ping), `/v1/transactions` (cursor-paginated by `(occurred_at, transaction_id)`, filterable by `action`), `/v1/transactions/{id}`, `/v1/model-metrics?model_version=...` (confusion matrix computed in SQL in `Postgres.ModelMetrics`), `/metrics` (Prometheus), and the dashboard at `GET /{$}`.
+
+Two constraints in this package are easy to break by accident:
+
+- The dashboard is registered as `GET /{$}`, not `GET /`. Plain `GET /` is Go's fallback for every unmatched GET, which turns each API 404 into a 200 page of HTML.
+- Pagination cursors must be built from the `occurred_at` **column**, never from the timestamp inside `raw_event`. The column is `timestamptz` (microseconds) while the JSON keeps nanoseconds, so a JSON-derived cursor overshoots and re-selects the row it was meant to page past.
+- Transaction fields reaching the dashboard are attacker-controlled: `domain.Validate` only checks most of them for non-emptiness. Build DOM cells with `textContent`, never by concatenating into `innerHTML`.
 
 Schema migration lives at `internal/store/migrations/001_init.sql`, embedded via `go:embed` and applied on service startup (`Postgres.Migrate`) — there's no separate migration tool/step.
+
+## Code review log
+
+Every code review of this repository gets written down in
+[`docs/explanation/code-review-log.md`](docs/explanation/code-review-log.md),
+newest review first. Log the findings **and** what was done about them — a
+review that only lives in a chat transcript is a review that gets repeated.
+
+For each finding, record:
+
+- **Where** — file and function, so it can be found again after the lines move.
+- **What was wrong** — the defect itself, with the offending code if it is short.
+- **Why it mattered** — the concrete failure it causes. "Unsafe" is not a
+  reason; "a merchant category of `<img src=x onerror=...>` runs script in the
+  operator's browser" is.
+- **The fix** — what changed, and any trade-off that was accepted on purpose.
+- **The guard** — the test that now catches a regression, by name. If a finding
+  could not reasonably be tested, say so and why.
+
+Match the detail to the severity. A high-severity defect earns a few paragraphs
+and a reproduction; a deprecated function call earns one bullet in a batch. Also
+record findings that were deliberately **not** fixed, with the reasoning, so the
+next reviewer does not re-raise them — and if a previously-accepted trade-off
+turns out to rest on faulty reasoning, correct the record rather than quietly
+fixing it.
+
+Verify a regression test actually reproduces the bug: reintroduce the defect,
+watch the test fail, then restore the fix. A test written against already-fixed
+code frequently passes for the wrong reason.
 
 ## Behavioral Guidelines
 

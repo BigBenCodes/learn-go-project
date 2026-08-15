@@ -487,40 +487,41 @@
             });
         }
 
+        // Transaction fields come straight from the consumed Kafka message and
+        // domain.Validate only checks them for non-emptiness, so they are
+        // attacker-controlled strings. Build cells with textContent — never
+        // innerHTML — or a merchant category like "<img src=x onerror=...>"
+        // executes in the operator's browser.
+        var KNOWN_ACTIONS = { no_action: true, review: true, escalate: true };
+
+        function cell(text) {
+          var td = document.createElement("td");
+          td.textContent = text;
+          return td;
+        }
+
+        function badgeCell(action) {
+          var td = document.createElement("td");
+          var span = document.createElement("span");
+          span.className = KNOWN_ACTIONS[action] ? "badge " + action : "badge";
+          span.textContent = action;
+          td.appendChild(span);
+          return td;
+        }
+
         function renderTx(tx) {
           var t = tx.transaction,
             a = tx.assessment,
             l = tx.label;
           var tr = document.createElement("tr");
-          tr.innerHTML =
-            "<td>" +
-            t.transaction_id +
-            "</td>" +
-            "<td>" +
-            fmtTime(t.occurred_at) +
-            "</td>" +
-            "<td>" +
-            fmtMoney(t.amount_minor, t.currency) +
-            "</td>" +
-            "<td>" +
-            t.merchant.id +
-            " (" +
-            t.merchant.category +
-            ")</td>" +
-            "<td>" +
-            a.risk_score.toFixed(3) +
-            "</td>" +
-            '<td><span class="badge ' +
-            a.recommended_action +
-            '">' +
-            a.recommended_action +
-            "</span></td>" +
-            "<td>" +
-            a.model_version +
-            "</td>" +
-            "<td>" +
-            (l ? (l.is_fraud ? "fraud" : "legit") : "—") +
-            "</td>";
+          tr.appendChild(cell(t.transaction_id));
+          tr.appendChild(cell(fmtTime(t.occurred_at)));
+          tr.appendChild(cell(fmtMoney(t.amount_minor, t.currency)));
+          tr.appendChild(cell(t.merchant.id + " (" + t.merchant.category + ")"));
+          tr.appendChild(cell(a.risk_score.toFixed(3)));
+          tr.appendChild(badgeCell(a.recommended_action));
+          tr.appendChild(cell(a.model_version));
+          tr.appendChild(cell(l ? (l.is_fraud ? "fraud" : "legit") : "—"));
           txBody.appendChild(tr);
         }
 

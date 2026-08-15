@@ -90,3 +90,4 @@ nav:
       - Delivery Guarantees and Idempotency: explanation/delivery-guarantees-and-idempotency.md
       - Scoring and Explainability: explanation/scoring-and-explainability.md
       - Design Decisions and Testability: explanation/design-decisions-and-testability.md
+      - Code Review Log: explanation/code-review-log.md

@@ -75,6 +75,23 @@ func TestPipelineMetricsServesJSON(t *testing.T) {
 	}
 }
 
+// "GET /" would be the fallback for every unmatched GET, answering 200 with
+// the dashboard HTML instead of 404 — fraudctl then fails on "invalid
+// character '<'" and a monitor pointed at a mistyped path reads as healthy.
+func TestUnknownPathsReturn404(t *testing.T) {
+	server := New(":0", fakeRepository{}, http.NotFoundHandler(), fakePipelineMetrics, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, path := range []string{"/does-not-exist", "/v1/bogus", "/v1/transaction/tx-1", "/v1/transactions/x/y"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
+			server.server.Handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", response.Code)
+			}
+		})
+	}
+}
+
 func TestListRejectsInvalidLimit(t *testing.T) {
 	server := New(":0", fakeRepository{}, http.NotFoundHandler(), fakePipelineMetrics, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/v1/transactions?limit=101", nil)

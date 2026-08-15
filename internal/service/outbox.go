@@ -9,8 +9,7 @@ import (
 )
 
 type OutboxRepository interface {
-	FetchOutbox(context.Context, int) ([]store.OutboxEvent, error)
-	MarkOutboxPublished(context.Context, int64) error
+	PublishOutbox(context.Context, int, func(store.OutboxEvent) error) (int, error)
 }
 
 type Publisher interface {
@@ -44,19 +43,13 @@ func (o *Outbox) Run(ctx context.Context) error {
 	}
 }
 
+// flush claims a batch of unpublished rows and publishes them. The claim and
+// the published_at writes happen in one store-side transaction so a second
+// replica cannot publish the same rows; see store.Postgres.PublishOutbox.
 func (o *Outbox) flush(ctx context.Context) error {
-	events, err := o.repository.FetchOutbox(ctx, 100)
-	if err != nil {
-		return err
-	}
-	for _, event := range events {
-		if err := o.publisher.Publish(ctx, event.Topic, event.Key, event.Payload); err != nil {
-			return err
-		}
-		if err := o.repository.MarkOutboxPublished(ctx, event.ID); err != nil {
-			return err
-		}
-		o.metrics.OutboxPublished.Inc()
-	}
-	return nil
+	published, err := o.repository.PublishOutbox(ctx, 100, func(event store.OutboxEvent) error {
+		return o.publisher.Publish(ctx, event.Topic, event.Key, event.Payload)
+	})
+	o.metrics.OutboxPublished.Add(float64(published))
+	return err
 }

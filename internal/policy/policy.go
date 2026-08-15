@@ -2,6 +2,7 @@ package policy
 
 import (
 	"errors"
+	"math"
 
 	"github.com/bensullivan2002/learn-go-project/internal/domain"
 )
@@ -12,6 +13,11 @@ type Thresholds struct {
 }
 
 func New(review, escalate float64) (Thresholds, error) {
+	// NaN compares false against everything, so it slips past the range check
+	// below and yields a policy that never fires. Reject it explicitly.
+	if math.IsNaN(review) || math.IsNaN(escalate) {
+		return Thresholds{}, errors.New("thresholds must be numbers")
+	}
 	if review < 0 || escalate > 1 || review >= escalate {
 		return Thresholds{}, errors.New("thresholds must satisfy 0 <= review < escalate <= 1")
 	}

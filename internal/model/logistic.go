@@ -54,8 +54,17 @@ func (m *Logistic) Score(features domain.FeatureVector) (float64, []domain.Signa
 		logit += contribution
 		signals = append(signals, domain.Signal{Feature: feature, Value: value, Contribution: contribution})
 	}
-	sort.Slice(signals, func(i, j int) bool {
-		return math.Abs(signals[i].Contribution) > math.Abs(signals[j].Contribution)
+	// Weights is a map, so the pre-sort order is already random; without a
+	// tiebreaker, features whose contributions tie (commonly at 0 — a domestic
+	// daytime first transaction zeroes several at once) would land in a
+	// different order on every call, and the same input would persist
+	// different assessments.signals JSON from run to run.
+	sort.SliceStable(signals, func(i, j int) bool {
+		a, b := math.Abs(signals[i].Contribution), math.Abs(signals[j].Contribution)
+		if a != b {
+			return a > b
+		}
+		return signals[i].Feature < signals[j].Feature
 	})
 	return 1 / (1 + math.Exp(-logit)), signals
 }

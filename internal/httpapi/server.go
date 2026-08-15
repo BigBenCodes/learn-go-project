@@ -33,7 +33,11 @@ type Server struct {
 func New(address string, repository Repository, metricsHandler http.Handler, pipelineMetrics func() (domain.PipelineMetrics, error), logger *slog.Logger) *Server {
 	s := &Server{repository: repository, pipelineMetrics: pipelineMetrics, logger: logger}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.dashboard)
+	// "GET /{$}" matches only the root path. Plain "GET /" would be the
+	// fallback for every unmatched GET, so a typo like /v1/transaction/tx-1
+	// would answer 200 with the dashboard HTML instead of 404 — invisible to
+	// monitoring and unparseable to fraudctl.
+	mux.HandleFunc("GET /{$}", s.dashboard)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /v1/transactions", s.listTransactions)
