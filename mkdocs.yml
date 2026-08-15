@@ -1,0 +1,92 @@
+site_name: Go Fraud Pipeline
+site_description: A small, production-shaped fraud-scoring pipeline for learning Go.
+site_url: https://BigBenCodes.github.io/learn-go-project/
+repo_url: https://github.com/BigBenCodes/learn-go-project
+repo_name: BigBenCodes/learn-go-project
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/shield-search
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+
+plugins:
+  - search:
+      lang: en
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - Getting Started: tutorials/getting-started.md
+  - How-To Guides:
+      - Reproduce a Simulator Run: how-to/reproduce-simulator-runs.md
+      - Run the Service in Docker Compose: how-to/run-service-in-docker-compose.md
+      - Query Transactions with fraudctl: how-to/query-with-fraudctl.md
+      - Reset Local Infrastructure: how-to/reset-local-infrastructure.md
+      - Run Tests and Build Binaries: how-to/run-tests-and-build.md
+      - Run the Suggested Experiments: how-to/run-suggested-experiments.md
+  - Reference:
+      - HTTP API: reference/http-api.md
+      - Commands: reference/commands.md
+      - Configuration and Topics: reference/configuration.md
+  - Explanation:
+      - Architecture Overview: explanation/architecture-overview.md
+      - Delivery Guarantees and Idempotency: explanation/delivery-guarantees-and-idempotency.md
+      - Scoring and Explainability: explanation/scoring-and-explainability.md
+      - Design Decisions and Testability: explanation/design-decisions-and-testability.md
